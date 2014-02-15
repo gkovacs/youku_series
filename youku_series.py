@@ -18,12 +18,35 @@ import os
 from shutil import move
 from shutil import rmtree
 
+
+def memoize(f):
+  """ Memoization decorator for functions taking one or more arguments. """
+  class memodict(dict):
+    def __init__(self, f):
+      self.f = f
+    def __call__(self, *args):
+      return self[args]
+    def __missing__(self, key):
+      ret = self[key] = self.f(*key)
+      return ret
+  return memodict(f)
+
+@memoize
+def mpq(url):
+  return pq(url=url)
+
 def list_episodes_youku(title_url):
   output = []
-  d = pq(url=title_url)
+  youku_parts = list_youku_parts(title_url)
+  if len(youku_parts) > 0:
+    for part in youku_parts:
+      output.extend(list_episodes_in_youku_part(part))
+    return output
+  d = mpq(title_url)
   for x in d('.seriespanels').find('a'):
     episode = pq(x)
     text = episode.text()
+    print('text:', text)
     if text != str(len(output) + 1):
       print('skipping:', text)
       continue
@@ -33,7 +56,7 @@ def list_episodes_youku(title_url):
 
 def list_episodes_soku(title_url):
   output = []
-  d = pq(url=title_url)
+  d = mpq(title_url)
   for linkpanels_xml in d('.linkpanels'):
     linkpanels = pq(linkpanels_xml)
     css = linkpanels.attr('style')
@@ -64,7 +87,7 @@ def list_episodes(title_url):
 # returns the title of the show
 # title_url: ex: http://www.youku.com/show_page/id_zcbfce0fc962411de83b1.html
 def list_title(title_url):
-  d = pq(url=title_url)
+  d = mpq(title_url)
   # youku
   for x in d('h1.title').find('span.name'):
     return d(x).text()
@@ -121,16 +144,53 @@ def main():
       print('already exists:', output_file)
       continue
     tmpdir = 'tmp_' + str(episode_num)
-    if os.path.exists(tmpdir):
-      print('removing tmpdir:', tmpdir)
-      rmtree(tmpdir)
-    call(['you-get', '-o', tmpdir] + opt_args + [episode_url])
-    tmpdir_files = [x for x in os.listdir(tmpdir) if not x.startswith('.')]
-    if len(tmpdir_files) != 1:
-      print('tmpdir_files not correct:', tmpdir, tmpdir_files)
-      return
+    for trynum in range(2):
+      if trynum > 0:
+        print('retrying, episode_num:', episode_num, 'trynum:', trynum)
+      if os.path.exists(tmpdir):
+        print('removing tmpdir:', tmpdir)
+        rmtree(tmpdir)
+      command = ['you-get', '-o', tmpdir] + opt_args + [episode_url]
+      print(' '.join(command))
+      call(command)
+      tmpdir_files = [x for x in os.listdir(tmpdir) if not x.startswith('.')]
+      if len(tmpdir_files) == 1:
+        break # success
+      else:
+        print('tmpdir_files not correct:', tmpdir, tmpdir_files)
     move(tmpdir + '/' + tmpdir_files[0], output_file)
     rmtree(tmpdir)
 
+
+
+def youku_series_id_from_url(url):
+  assert 'http://www.youku.com/show_page/id_' in url
+  return url.replace('http://www.youku.com/show_page/id_', '').replace('.html', '')
+
+def youku_jsload_geturl(partname, series_id):
+  return 'http://www.youku.com/show_episode/id_' + series_id + '.html?dt=json&divid=' + partname
+
+def list_episodes_in_youku_part(part_url):
+  output = []
+  d = mpq(part_url)
+  for x in d.find('a'):
+    output.append(d(x).attr('href'))
+  return output
+
+def list_youku_parts(url):
+  series_id = youku_series_id_from_url(url)
+  output = []
+  d = mpq(url)
+  for x in d('#reload_showInfo').find('a'):
+    reloadPanelLink = pq(x)
+    onclick = reloadPanelLink.attr('onclick')
+    if onclick and 'y.episode.show(' in onclick:
+      link = onclick.replace('y.episode.show(\'', '').replace('\')', '')
+      output.append(youku_jsload_geturl(link, series_id))
+  return output
+
+
 if __name__ == '__main__':
   main()
+
+

@@ -1,0 +1,3 @@
+#!/bin/sh
+
+ipython3 nbconvert --to python youku_series.ipynb --stdout | ./filter_nbconvert_export.py > youku_series.py
